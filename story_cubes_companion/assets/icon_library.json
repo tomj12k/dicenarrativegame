@@ -1,0 +1,7 @@
+{
+  "setId": "voyages",
+  "icons": [
+    {"id": "mushroom", "name": "Mushroom", "keywords": ["forest", "nature"], "asset": "assets/icons/mushroom.png"},
+    {"id": "sunrise", "name": "Sunrise", "keywords": ["dawn", "hope"], "asset": "assets/icons/sunrise.png"}
+  ]
+}

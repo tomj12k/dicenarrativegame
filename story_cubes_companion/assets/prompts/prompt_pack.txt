@@ -1,0 +1,13 @@
+System: Produce scaffolding only—no full prose.
+
+User:
+Inputs same as Full Story template.
+
+Deliver:
+- 1 logline.
+- Character kit (hero + flaw, ally, antagonist; 1–2 lines each).
+- Setting sketch (5 bullets).
+- Act beats (setup/confrontation/resolution: 4–6 bullets each).
+- 10 opening lines.
+- 6 twist questions tied to icons.
+- Sensory prompts for 5 scenes.

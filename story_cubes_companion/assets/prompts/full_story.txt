@@ -1,0 +1,16 @@
+System: You are a skilled novelist for {audience}. Obey style and continuity strictly.
+
+User:
+STORY CUBES (set: {set}): {icons}
+ROLES: {roles}
+STYLE: {genre}, {tone}, POV {pov}, tense {tense}, realism {realism}, {minWords}-{maxWords} words, structure {structure}
+CONTINUITY (Story Bible – immutable facts): {bible}
+LAST CHAPTER SUMMARY (≤120 words): {lastSummary}
+
+REQUIREMENTS:
+1) Use every icon meaningfully (not just namedrops).
+2) Advance at least one open thread; optionally plant one new question.
+3) Keep voices/POV/tense consistent; no retcons.
+4) Safe for {audience}; no gore; playful peril ok.
+5) End with "Chapter Notes" (2–3 sentences of new facts).
+Write the story/chapter now.

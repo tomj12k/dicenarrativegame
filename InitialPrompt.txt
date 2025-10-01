@@ -1,0 +1,207 @@
+# One-Shot Meta Prompt: “Story Cubes Companion” (Flutter, iOS+Android)
+
+**You are a senior mobile+ML engineer.** Build a production-ready Flutter app that (1) recognizes Story Cubes from a photo, (2) lets the user correct any misreads, (3) generates either a full story or a prompt pack with style controls, and (4) supports **Continuous Story Mode** that chains multiple rolls into a single manuscript. Ship an MVP with clean code, tests, and docs.
+
+## Objectives
+
+1. **Capture & Recognize**: Take a photo of up to 9 dice; detect each die and classify the face icon (Rory’s Story Cubes: *Voyages* set, 54 icons).
+2. **Review & Correct**: Show confidence per die; allow tap-to-fix from an icon library; rotate/re-crop/re-detect controls.
+3. **Story Engine**:
+
+   * **Preset Builder (pre-generate options)** with global knobs (length, realism, audience, genre, POV/tense, tone, structure) and per-die **roles** (hero/setting/obstacle/item/twist).
+   * **Output Workflow** with two modes:
+
+     * **Full Story** (100–2,000 words).
+     * **Prompt Pack** (hooks, beats, characters, setting bullets, opening lines, twist questions).
+4. **Continuous Story Mode (CSM)**: Each new roll becomes the next chapter in the same story. Maintain a “Story Bible” (canon) with characters, places, rules, and open threads. Export as TXT/PDF/EPUB.
+5. **History & Share**: Save rolls, presets, outputs; export/share.
+
+## Target Stack
+
+* **Flutter** (stable channel).
+* **Packages**: `camera`, `image`, `flutter_hooks`, `riverpod` (or `bloc`), `go_router`, `shared_preferences` + `sqflite` (local cache), `dio` (HTTP), `pdf` (for exports).
+* **On-device ML**:
+
+  * Detector: YOLOv8-n/YOLOv10-n or custom SSD (export → **TFLite**/**ONNX**).
+  * Classifier: MobileNetV3-Small (54 classes). Export **TFLite**/**CoreML**/**NNAPI** friendly.
+  * Wrapper: `tflite_flutter` (+ `tflite_flutter_helper`) or `onnxruntime_flutter`.
+  * Fallback for MVP: classical contour detection → crop → classifier.
+* **LLM** (serverless first): call a configurable HTTPS endpoint (`/story`, `/promptpack`). Default to OpenAI/Bedrock; inject API key via `.env`.
+* **Optional backend**: Supabase (auth/storage/Postgres). If omitted, persist locally and call LLM directly.
+
+## Screens (minimal)
+
+1. **Camera & Detect** (S1): capture/retake; show 9 tiles with label + confidence chip; “Fix” badges for low confidence.
+2. **Review & Correct** (S2): tap a tile → icon picker (searchable 54-icon grid), rotate, re-detect, “apply to similar”.
+3. **Preset Builder** (S3): global knobs + per-die role assignments; save/load named presets.
+4. **Generate** (S4): choose **Full Story** or **Prompt Pack**; show output; “Regenerate” / “Edit Inline” / “Save”.
+5. **Continuous Story Mode** (S5): chapter timeline (roll image + icons + summary), Story Bible view, export.
+6. **History** (S6): previous rolls, presets, stories; share/export.
+
+## Data Models (Dart)
+
+```dart
+enum DieIcon { mushroom, sunrise, cauldron, crown, shield, angryFace, beans, crow, helmet, /*… all 54 */ }
+
+class DieRead { int index; Rect bbox; DieIcon? label; double confidence; Uint8List? crop; }
+
+class Roll { String rollId; DateTime ts; List<DieRead> dice; String? sourceImagePath; String setId; }
+
+class Style {
+  int minWords, maxWords; double realism; String genre, tone, audience, pov, tense, structure;
+}
+
+class Roles { Map<DieIcon, String> roleByIcon; } // hero, setting, obstacle, item, twist…
+
+class Preset { String id; String name; Style style; Roles roles; }
+
+class StoryChapter { int number; String text; String summary; List<DieIcon> icons; List<String> openThreadsDelta; }
+
+class StoryBible { Map<String,String> characters; Map<String,String> places; List<String> rules; List<String> openThreads; }
+
+class ContinuousStory {
+  String storyId; String title; Style style; StoryBible bible; List<StoryChapter> chapters;
+}
+
+class GenerationRequest {
+  Roll roll; Style style; Roles roles; bool continuous; String? storyId; String mode; // "full" | "prompt"
+}
+```
+
+## Icon Library
+
+* Bundle a local JSON for the 54 **Voyages** icons with: `id`, `name`, `keywords`, and an SVG/PNG glyph used by the picker.
+* Provide a **set selector** (future: Original/Actions/etc.).
+
+## ML Pipeline (on device)
+
+1. Preprocess: crop/deskew, WB/CLAHE, normalize.
+2. Detect dice (NMS). Cap at 9.
+3. Crop each die → classify icon; return `{label, confidence}`.
+4. Threshold: if `< 0.80`, flag for correction.
+5. Persist `Roll` with crops for debugging.
+
+### Training Notes (include in repo `ml/README.md`)
+
+* Collect 20–50 photos per icon; augment (rotate ±20°, blur, brightness/contrast, perspective jitter, shadows).
+* Export models: `pytorch → onnx → tflite`.
+* Benchmark targets: 25ms detection, 5ms/classification per crop on mid-range Android; <150ms total on iPhone 12+.
+
+## LLM Contracts (HTTP)
+
+```http
+POST /story
+body: {
+  roll: { dice: ["mushroom","sunrise",...], setId: "voyages" },
+  style: {...},
+  roles: {"mushroom":"setting","crown":"antagonist-symbol"},
+  continuous: true,
+  storyId: "uuid-or-null",
+  mode: "full", // or "prompt"
+  targetWords: 700
+}
+→ { storyId, chapter: {number,text,summary}, updatedBible }
+
+POST /promptpack
+body: { same fields, mode:"prompt" }
+→ { storyId, promptPack: {...}, updatedBible }
+```
+
+## Prompt Templates (LLM)
+
+**Full Story (single chapter or standalone)**
+
+```
+System: You are a skilled novelist for {audience}. Obey style and continuity strictly.
+
+User:
+STORY CUBES (set: Voyages): {["mushroom","sunrise","cauldron","crown","shield","angryFace","beans","crow","helmet"]}
+ROLES: {per-die role map}
+STYLE: {genre}, {tone}, POV {pov}, tense {tense}, realism {realism}, {minWords}-{maxWords} words, structure {structure}
+CONTINUITY (Story Bible – immutable facts): {bible_json_or_empty}
+LAST CHAPTER SUMMARY (≤120 words): {last_summary_or_empty}
+
+REQUIREMENTS:
+1) Use every icon meaningfully (not just namedrops).
+2) Advance at least one open thread; optionally plant one new question.
+3) Keep voices/POV/tense consistent; no retcons.
+4) Safe for {audience}; no gore; playful peril ok.
+5) End with "Chapter Notes" (2–3 sentences of new facts).
+Write the story/chapter now.
+```
+
+**Prompt Pack (scaffolding)**
+
+```
+System: Produce scaffolding only—no full prose.
+
+User:
+Inputs same as above.
+
+Deliver:
+- 1 logline.
+- Character kit (hero + flaw, ally, antagonist; 1–2 lines each).
+- Setting sketch (5 bullets).
+- Act beats (setup/confrontation/resolution: 4–6 bullets each).
+- 10 opening lines.
+- 6 twist questions tied to icons.
+- Sensory prompts for 5 scenes.
+```
+
+**Realism Dial Mapping**
+
+* 0.0–0.3 → surreal/fable logic; allow talking animals.
+* 0.3–0.7 → balanced; foreshadow miracles.
+* 0.7–1.0 → grounded causality; magic as tech or myth with rules.
+  Map dial to LLM decoding (temperature/top-p) and stylistic constraints.
+
+## Continuous Story Mode Logic
+
+* Maintain **Story Bible** after each generation:
+
+  * Update characters/places/rules via simple NER + heuristics (names, locations, capitalized entities).
+  * Track `openThreads`: new ones from “Chapter Notes”; let user mark resolved.
+* Chapter timeline view with “Regenerate / Edit / Fork branch”.
+* Export manuscript as plain continuous text or chapterized PDF/EPUB; include an icon header strip per chapter.
+
+## UX Details
+
+* Confidence chips on tiles: green ≥0.92, amber 0.80–0.91, red <0.80.
+* Correction: searchable icon grid; show current guess & probability; “apply to similar”.
+* Roles quick-assign: drag icons into role buckets (hero/setting/obstacle/item/twist).
+* Presets: Cozy Campfire (kids 6–9), Epic Voyage (YA), Travel Journal (grounded). All editable & savable.
+
+## Quality Gates / Acceptance Criteria
+
+* Detects & classifies ≥8/9 dice in most indoor lighting; correction UI resolves the rest in <15s.
+* All 9 icons appear meaningfully in outputs.
+* CSM keeps POV/tense/character names consistent across ≥5 chapters.
+* Cold start <2.5s, recognition <300ms on Pixel 6 / iPhone 12.
+* Unit tests for data models/parsers; widget tests for screens; golden tests for icon picker.
+* LLM errors handled with retries and a readable message; app stays usable offline for history.
+
+## Deliverables
+
+1. Flutter project with modular layers (`core/`, `features/recognition/`, `features/story/`, `features/csm/`).
+2. Model runners (TFLite/ONNX) with benchmark harness.
+3. Icon library (SVG/PNG + JSON metadata).
+4. `.env.sample` and secure key loading.
+5. Supabase schema (optional) SQL + REST stubs.
+6. E2E sample: preload 3 sample rolls → one full story + one prompt pack.
+7. README with build/run steps for iOS & Android, plus `ml/README.md` for training.
+
+## Build & Run (draft in README)
+
+* `flutter pub get`
+* Android: `flutter run -d android`
+* iOS: `cd ios && pod install && cd .. && flutter run -d ios`
+* Env: `cp .env.sample .env` then set `LLM_API_KEY`, `LLM_BASE_URL`.
+
+## Stretch Goals (nice to have)
+
+* Multi-set auto-detection (Voyages/Original/Actions).
+* Party Mode (everyone rolls; merge chapters).
+* Voice narration (TTS) and audiobook export.
+* Local LLM fallback for offline short prompts.
+
+**Now implement**: scaffold the Flutter app, generate models’ interfaces (mock with random labels first), wire the screens, and include the above prompt templates in `/assets/prompts/`. Provide sample unit and widget tests and a concise README.
